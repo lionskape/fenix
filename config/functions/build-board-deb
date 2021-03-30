@@ -19,10 +19,11 @@ build_board_deb() {
 	Architecture: $DISTRIB_ARCH
 	Maintainer: Khadas <hello@khadas.com>
 	Installed-Size: 1
-	Replaces: alsa-utils, linux-firmware, watchdog, base-files, mpv, zram-config, haveged, initramfs-tools-core, ppp, linux-board-package-${DISTRIB_RELEASE,,}-vim1, linux-board-package-${DISTRIB_RELEASE,,}-vim2, linux-board-package-${DISTRIB_RELEASE,,}-vim3, linux-board-package-${DISTRIB_RELEASE,,}-vim3l
+	Replaces: alsa-utils, linux-firmware, watchdog, base-files, mpv, zram-config, haveged, initramfs-tools-core, ppp, linux-board-package-${DISTRIB_RELEASE,,}-vim1, linux-board-package-${DISTRIB_RELEASE,,}-vim2, linux-board-package-${DISTRIB_RELEASE,,}-vim3, linux-board-package-${DISTRIB_RELEASE,,}-vim3l, plymouth
 	Section: kernel
 	Priority: optional
-	Depends: ${board_deb_dependencies}
+	Recommends: ${board_deb_dependencies}
+	Depends: bash, linux-base, u-boot-tools, initramfs-tools, fping
 	Description: Fenix tweaks for ${DISTRIBUTION}-${DISTRIB_RELEASE} on $KHADAS_BOARD
 	EOF
 
@@ -203,6 +204,30 @@ build_board_deb() {
 
 	systemctl --no-reload enable fenix-zram-config.service fenix-hardware-optimize.service >/dev/null 2>&1
 
+	# Setup plymouth
+	case "\$1" in
+		configure)
+		update-alternatives \
+			--install /usr/share/plymouth/themes/default.plymouth default.plymouth \
+			/usr/share/plymouth/themes/fenix/fenix.plymouth 150
+
+		ln -fs /usr/share/plymouth/themes/fenix/fenix.plymouth /etc/alternatives/default.plymouth
+
+		if which update-initramfs >/dev/null 2>&1
+		then
+			update-initramfs -u
+		fi
+		;;
+
+		abort-upgrade|abort-deconfigure|abort-remove)
+		;;
+
+		*)
+		echo "\$0 called with unknown argument '\$1'" 1>&2
+		exit 1
+		;;
+	esac
+
 	exit 0
 	EOF
 
@@ -223,8 +248,10 @@ build_board_deb() {
 
 	if [ "$DISTRIBUTION" == "Ubuntu" ] && [ "$DISTRIB_TYPE" != "minimal" ]; then
 		# Add fenix repository
-		mkdir -p $pkgdir/etc/apt/sources.list.d
-		echo "deb https://dl.khadas.com/repos/${KHADAS_BOARD,,}/ ${DISTRIB_RELEASE} main" > $pkgdir/etc/apt/sources.list.d/fenix.list
+		if [ "$BUILD_TYPE" == "release" ]; then
+			mkdir -p $pkgdir/etc/apt/sources.list.d
+			echo "deb https://dl.khadas.com/repos/${KHADAS_BOARD,,}/ ${DISTRIB_RELEASE} main" > $pkgdir/etc/apt/sources.list.d/fenix.list
+		fi
 	fi
 
 	# Fixup rc.local permission
@@ -312,6 +339,8 @@ build_board_deb() {
 	# Install bmp logo
 	mkdir -p $pkgdir/usr/share/fenix/logo
 	cp $ROOT/archives/logo/bmp/* $pkgdir/usr/share/fenix/logo
+	# Install png logo
+	cp $ROOT/archives/logo/png/*.png $pkgdir/usr/share/fenix/logo
 
 	if [ "$KHADAS_BOARD" == "VIM1" ] && [ "$DISTRIB_RELEASE" == "bionic" ]; then
 		# Blacklist lima.ko
@@ -359,7 +388,7 @@ build_board_deb() {
 	ARCH=$DISTRIB_ARCH
 	INITRD_ARCH=arm64
 	INSTALL_TYPE=$INSTALL_TYPE
-	IMAGE_RELEASE_VERSION=$IMAGE_RELEASE_VERSION
+	IMAGE_VERSION=$IMAGE_VERSION
 	################ GIT VERSION ################
 	UBOOT_GIT_VERSION=`git -C $ROOT/u-boot describe --abbrev=7 --dirty --always --tags 2> /dev/null`
 	LINUX_GIT_VERSION=`git -C $ROOT/linux describe --abbrev=7 --dirty --always --tags 2> /dev/null`
@@ -381,6 +410,11 @@ build_board_deb() {
 		;;
 
 	esac
+
+	# Add dependencies file
+	cat <<-EOF > $pkgdir/etc/fenix-board-dependencis
+	FENIX_BOARD_DEPENDENCIES="$(echo $PACKAGE_LIST_ADDITIONAL)"
+	EOF
 
 	# Create board deb file
 	info_msg "Building package: $pkgname"
